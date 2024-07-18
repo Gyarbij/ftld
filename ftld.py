@@ -4,6 +4,7 @@ import aiohttp
 from typing import List, Dict
 import itertools
 import string
+from datetime import datetime
 
 ICANN_TLD_LIST_URL = "https://data.iana.org/TLD/tlds-alpha-by-domain.txt"
 
@@ -88,7 +89,19 @@ async def check_domains(base_domain: str, tlds: List[str], registrar: str) -> Li
         if registrar == 'cloudflare' and tld not in CLOUDFLARE_TLDS:
             continue
         tasks.append(is_available(f"{base_domain}.{tld}", resolver))
-    return await asyncio.gather(*tasks)
+    
+    results = []
+    total_checked = 0
+    for task in asyncio.as_completed(tasks):
+        result = await task
+        results.append(result)
+        total_checked += 1
+        if result['status'] == 'available':
+            print(f"Found available domain: {result['domain']}")
+        if total_checked % 10 == 0:
+            print(f"Checked {total_checked} out of {len(tasks)} domains...")
+    
+    return results
 
 def get_user_choice(prompt: str, options: List[str]) -> str:
     while True:
@@ -131,11 +144,39 @@ async def check_permutations(tld: str) -> List[Dict]:
     
     return results
 
+def save_to_markdown(results: List[Dict], filename: str, mode: str, tld: str = None):
+    with open(filename, 'w') as f:
+        f.write(f"# fTLD Domain Availability Check Results\n\n")
+        f.write(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+        
+        if mode == "Check specific domain":
+            f.write(f"## Checked Domains\n\n")
+            for result in results:
+                f.write(f"- {result['domain']}: **{result['status']}**\n")
+        elif mode == "Find available 2-character domains":
+            f.write(f"## Available 2-character domains for .{tld}\n\n")
+            for result in results:
+                f.write(f"- {result['domain']}\n")
+        
+        f.write(f"\n## Summary\n\n")
+        available_count = sum(1 for r in results if r['status'] == 'available')
+        f.write(f"- Total domains checked: {len(results)}\n")
+        f.write(f"- Available domains: {available_count}\n")
+        f.write(f"- Registered domains: {len(results) - available_count}\n")
+
 async def main():
     print("Welcome to fTLD!")
 
+    save_option = input("Do you want to save the results to a file? (y/n): ").lower()
+    filename = None
+    if save_option == 'y':
+        filename = input("Enter the filename to save (without extension): ")
+        filename = f"{filename}.md"
+
     mode_options = ["Check specific domain", "Find available 2-character domains"]
     mode_choice = get_user_choice("Select a mode:", mode_options)
+
+    results = []
 
     if mode_choice == "Check specific domain":
         registrar_options = ["All TLDs", "Route 53", "Cloudflare"]
@@ -164,13 +205,17 @@ async def main():
         tld = input("Enter the TLD to check (e.g., com, net, org): ").lower()
         print(f"Checking all 2-character permutations for .{tld}")
         
-        available = await check_permutations(tld)
+        results = await check_permutations(tld)
         
         print(f"\nAvailable 2-character domains for .{tld}:")
-        for domain in available:
+        for domain in results:
             print(f"- {domain['domain']}")
         
-        print(f"\nTotal available 2-character domains: {len(available)}")
+        print(f"\nTotal available 2-character domains: {len(results)}")
+
+    if filename:
+        save_to_markdown(results, filename, mode_choice, tld if mode_choice == "Find available 2-character domains" else None)
+        print(f"Results saved to {filename}")
 
 if __name__ == "__main__":
     asyncio.run(main())
