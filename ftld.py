@@ -5,6 +5,13 @@ from typing import List, Dict
 import itertools
 import string
 from datetime import datetime
+import whois
+import json
+import time
+import logging
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 ICANN_TLD_LIST_URL = "https://data.iana.org/TLD/tlds-alpha-by-domain.txt"
 
@@ -79,6 +86,28 @@ async def is_available(domain: str, resolver: aiodns.DNSResolver) -> Dict:
         return {"domain": domain, "status": "registered"}
     except aiodns.error.DNSError:
         return {"domain": domain, "status": "available"}
+    except Exception as e:
+        logger.error(f"Error checking domain {domain}: {e}")
+        return {"domain": domain, "status": "error", "error": str(e)}
+
+def get_whois_info(domain: str) -> Dict:
+    try:
+        w = whois.whois(domain)
+        
+        registrant = w.registrant or w.org or "N/A"
+        expiration_date = w.expiration_date
+        if isinstance(expiration_date, list):
+            expiration_date = expiration_date[0]
+        expiration_date_str = expiration_date.strftime("%Y-%m-%d") if expiration_date else "N/A"
+        
+        return {
+            "registrant": registrant,
+            "expiration_date": expiration_date_str,
+            "raw_data": json.dumps(w, default=str, indent=2)
+        }
+    except Exception as e:
+        logger.error(f"Error fetching WHOIS info for {domain}: {e}")
+        return {"registrant": "Error", "expiration_date": "Error", "raw_data": str(e)}
 
 async def check_domains(base_domain: str, tlds: List[str], registrar: str) -> List[Dict]:
     resolver = aiodns.DNSResolver()
@@ -94,12 +123,28 @@ async def check_domains(base_domain: str, tlds: List[str], registrar: str) -> Li
     total_checked = 0
     for task in asyncio.as_completed(tasks):
         result = await task
+        if result['status'] == 'registered':
+            retries = 3
+            while retries > 0:
+                try:
+                    whois_info = get_whois_info(result['domain'])
+                    result.update(whois_info)
+                    break
+                except Exception as e:
+                    logger.error(f"Error fetching WHOIS info for {result['domain']}: {e}")
+                    retries -= 1
+                    if retries > 0:
+                        logger.info(f"Retrying in 5 seconds... ({retries} attempts left)")
+                        await asyncio.sleep(5)
+                    else:
+                        result.update({
+                            "registrant": "Error fetching data",
+                            "expiration_date": "Error fetching data",
+                            "raw_data": f"Error after 3 attempts: {e}"
+                        })
         results.append(result)
         total_checked += 1
-        if result['status'] == 'available':
-            print(f"Found available domain: {result['domain']}")
-        if total_checked % 10 == 0:
-            print(f"Checked {total_checked} out of {len(tasks)} domains...")
+        logger.info(f"Checked {total_checked} out of {len(tasks)} domains... Status: {result['status']}")
     
     return results
 
@@ -138,7 +183,8 @@ async def check_permutations(tld: str) -> List[Dict]:
     for i in range(0, len(tasks), chunk_size):
         chunk = tasks[i:i+chunk_size]
         chunk_results = await asyncio.gather(*chunk)
-        results.extend([r for r in chunk_results if r['status'] == 'available'])
+        available = [r for r in chunk_results if r['status'] == 'available']
+        results.extend(available)
         total_checked += len(chunk)
         print(f"Checked {total_checked} out of {len(tasks)} permutations... Found {len(results)} available so far.")
     
@@ -152,7 +198,13 @@ def save_to_markdown(results: List[Dict], filename: str, mode: str, tld: str = N
         if mode == "Check specific domain":
             f.write(f"## Checked Domains\n\n")
             for result in results:
-                f.write(f"- {result['domain']}: **{result['status']}**\n")
+                f.write(f"### {result['domain']}\n")
+                f.write(f"- Status: **{result['status']}**\n")
+                if result['status'] == 'registered':
+                    f.write(f"- Registrant: {result['registrant']}\n")
+                    f.write(f"- Expiration Date: {result['expiration_date']}\n")
+                    f.write(f"- Raw RDAP Data:\n```json\n{result['raw_data']}\n```\n")
+                f.write("\n")
         elif mode == "Find available 2-character domains":
             f.write(f"## Available 2-character domains for .{tld}\n\n")
             for result in results:
@@ -199,7 +251,12 @@ async def main():
         for domain in available:
             print(f"- {domain['domain']}")
         
+        print(f"\nRegistered domains:")
+        for domain in [r for r in results if r['status'] == 'registered']:
+            print(f"- {domain['domain']} (Registrant: {domain['registrant']}, Expires: {domain['expiration_date']})")
+        
         print(f"\nTotal available domains: {len(available)}")
+        print(f"Total registered domains: {len(results) - len(available)}")
 
     elif mode_choice == "Find available 2-character domains":
         tld = input("Enter the TLD to check (e.g., com, net, org): ").lower()
