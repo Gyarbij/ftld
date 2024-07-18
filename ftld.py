@@ -2,6 +2,8 @@ import asyncio
 import aiodns
 import aiohttp
 from typing import List, Dict
+import itertools
+import string
 
 ICANN_TLD_LIST_URL = "https://data.iana.org/TLD/tlds-alpha-by-domain.txt"
 
@@ -102,33 +104,73 @@ def get_user_choice(prompt: str, options: List[str]) -> str:
         except ValueError:
             print("Invalid input. Please enter a number.")
 
+def generate_permutations():
+    letters = string.ascii_lowercase
+    digits = string.digits
+    return [''.join(p) for p in itertools.chain(
+        itertools.product(letters, repeat=2),
+        itertools.product(digits, repeat=2),
+        itertools.product(letters, digits),
+        itertools.product(digits, letters)
+    )]
+
+async def check_permutations(tld: str) -> List[Dict]:
+    resolver = aiodns.DNSResolver()
+    permutations = generate_permutations()
+    tasks = [is_available(f"{perm}.{tld}", resolver) for perm in permutations]
+    
+    results = []
+    chunk_size = 100  # Adjust this value based on your needs and rate limits
+    total_checked = 0
+    for i in range(0, len(tasks), chunk_size):
+        chunk = tasks[i:i+chunk_size]
+        chunk_results = await asyncio.gather(*chunk)
+        results.extend([r for r in chunk_results if r['status'] == 'available'])
+        total_checked += len(chunk)
+        print(f"Checked {total_checked} out of {len(tasks)} permutations... Found {len(results)} available so far.")
+    
+    return results
+
 async def main():
-    print("Welcome to the Domain Availability Checker!")
+    print("Welcome to fTLD!")
 
-    # Registrar selection
-    registrar_options = ["All TLDs", "Route 53", "Cloudflare"]
-    registrar_choice = get_user_choice("Select a registrar or TLD option:", registrar_options)
-    
-    registrar = None
-    if registrar_choice == "Route 53":
-        registrar = "route53"
-    elif registrar_choice == "Cloudflare":
-        registrar = "cloudflare"
+    mode_options = ["Check specific domain", "Find available 2-character domains"]
+    mode_choice = get_user_choice("Select a mode:", mode_options)
 
-    # Domain name input
-    base_domain = input("Enter the domain name to check (without TLD): ").lower()
+    if mode_choice == "Check specific domain":
+        registrar_options = ["All TLDs", "Route 53", "Cloudflare"]
+        registrar_choice = get_user_choice("Select a registrar or TLD option:", registrar_options)
+        
+        registrar = None
+        if registrar_choice == "Route 53":
+            registrar = "route53"
+        elif registrar_choice == "Cloudflare":
+            registrar = "cloudflare"
 
-    # Fetch TLDs and check domains
-    tlds = await fetch_tlds()
-    results = await check_domains(base_domain, tlds, registrar)
-    
-    available = [r for r in results if r['status'] == 'available']
-    
-    print(f"\nAvailable domains:")
-    for domain in available:
-        print(f"- {domain['domain']}")
-    
-    print(f"\nTotal available domains: {len(available)}")
+        base_domain = input("Enter the domain name to check (without TLD): ").lower()
+
+        tlds = await fetch_tlds()
+        results = await check_domains(base_domain, tlds, registrar)
+        
+        available = [r for r in results if r['status'] == 'available']
+        
+        print(f"\nAvailable domains:")
+        for domain in available:
+            print(f"- {domain['domain']}")
+        
+        print(f"\nTotal available domains: {len(available)}")
+
+    elif mode_choice == "Find available 2-character domains":
+        tld = input("Enter the TLD to check (e.g., com, net, org): ").lower()
+        print(f"Checking all 2-character permutations for .{tld}")
+        
+        available = await check_permutations(tld)
+        
+        print(f"\nAvailable 2-character domains for .{tld}:")
+        for domain in available:
+            print(f"- {domain['domain']}")
+        
+        print(f"\nTotal available 2-character domains: {len(available)}")
 
 if __name__ == "__main__":
     asyncio.run(main())
