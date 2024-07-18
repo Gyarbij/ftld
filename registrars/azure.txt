@@ -1,0 +1,9 @@
+com
+net
+co.uk
+org
+nl
+in
+biz
+org.uk
+co.in
