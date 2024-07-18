@@ -205,7 +205,7 @@ def get_user_choice(prompt: str, options: List[str]) -> str:
             print("Invalid input. Please enter a number.")
 
 async def main():
-    print("Welcome to the Comprehensive Domain Checker!")
+    print("Welcome to fTLD - Find Top Level Domain!")
 
     save_option = input("Do you want to save the results to a file? (y/N): ").lower()
     filename = None
@@ -255,7 +255,7 @@ async def main():
 
     elif mode_choice == "Find available N-character domains":
         tld = input("Enter the TLD to check (e.g., com, net, org): ").lower()
-        n = int(input("Enter the number of characters to check (e.g., 2 for aa.com, ab.com, etc.): "))
+        n = int(input("Enter the number of characters to check (e.g., 2 for ho.nl, ab.io, etc.): "))
         print(f"Checking all {n}-character permutations for .{tld}")
         
         results = await check_permutations(tld, n, progress_reporter)
