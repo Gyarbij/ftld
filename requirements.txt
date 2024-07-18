@@ -1,2 +1,7 @@
+asyncio
 aiodns
 aiohttp
+typing-extensions
+itertools
+string
+datetime
