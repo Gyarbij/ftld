@@ -1,9 +1,3 @@
-asyncio
 aiodns
 aiohttp
-typing-extensions
-itertools
-string
-datetime
-setuptools
 python-whois
