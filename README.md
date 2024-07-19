@@ -17,7 +17,7 @@ To use fTLD, follow these steps:
 
 3. Install the required dependencies if you haven't already:
    ```
-   pip install aiodns aiohttp
+   pip install -r requirements.txt
    ```
 4. Run the script with various options:
 
